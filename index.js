@@ -98,6 +98,26 @@ app.post('/api/persons', (req, res) => {
     res.json(newPerson);
 })
 
+app.put('/api/persons/:id', (req, res) => {
+    const id = req.params.id;
+    const body = req.body;
+
+    if (!body.number) {
+        return res.status(400).json({ error: 'Number is missing' });
+    }
+
+    const personIndex = persons.findIndex(person => person.id === id);
+
+    if (personIndex === -1) {
+        return res.status(404).json({ status: "404", message: "Person not found" });
+    }
+
+    persons[personIndex] = { ...persons[personIndex], number: body.number };
+
+    res.json(persons[personIndex]);
+});
+
+
 app.listen(PORT, () => {
     console.log(`Server is running in port ${PORT}`); 
 })
