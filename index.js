@@ -25,8 +25,21 @@ app.use(morgan(':method :url :status :res[content-length] - :response-time ms :b
 mongoose.connect(process.env.MONGODB_URI)
 
 const personSchema = new mongoose.Schema({
-    name: String,
-    number: String,
+    name: {
+        type: String,
+        minLength: 3
+    },
+    number: {
+        type: String,
+        minLength: 8,
+        validate: {
+            validator: function(v) {
+                return /^\d{2,3}-\d+$/.test(v);
+            },
+            message: props => `${props.value} is not a valid phone number!`
+        },
+        required: [true, 'User phone number required']
+    }
 })
 
 // Transform the returned object: rename _id to id and remove __v
@@ -81,7 +94,7 @@ app.delete('/api/persons/:id', (req, res, next) => {
 })
 
 // Add a new person
-app.post('/api/persons', (req, res) => {
+app.post('/api/persons', (req, res, next) => {
     const body = req.body
 
     if (!body.name || !body.number) {
@@ -93,7 +106,9 @@ app.post('/api/persons', (req, res) => {
         number: body.number,
     })
 
-    person.save().then(savedPerson => res.json(savedPerson))
+    person.save()
+        .then(savedPerson => res.json(savedPerson))
+        .catch(error => next(error))
 })
 
 // Update a person's number by id
@@ -131,6 +146,8 @@ const errorHandler = (error, request, response, next) => {
 
     if (error.name === 'CastError') {
         return response.status(400).send({ error: 'malformatted id' })
+    } else if (error.name === 'ValidationError') {
+        return response.status(400).json({ error: error.message })
     }
 
     next(error)
