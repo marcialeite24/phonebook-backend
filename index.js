@@ -1,123 +1,142 @@
-const express = require('express');
-const cors = require('cors');
-var morgan = require('morgan');
-const app = express();
-const PORT = process.env.PORT || 3001;
+require('dotenv').config()
 
-app.use(express.json());
-app.use(cors());
-app.use(express.static('dist'));
+const express = require('express')
+const cors = require('cors')
+const morgan = require('morgan')
+const mongoose = require('mongoose')
 
-morgan.token('body', (req) => { 
-    return req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : '';
-});
+const app = express()
+const PORT = process.env.PORT || 3001
 
-app.use(
-    morgan(':method :url :status :res[content-length] - :response-time ms :body')
-);
+// --- Middleware ---
 
-let persons = [
-    { 
-      "id": "1",
-      "name": "Arto Hellas", 
-      "number": "040-123456"
-    },
-    { 
-      "id": "2",
-      "name": "Ada Lovelace", 
-      "number": "39-44-5323523"
-    },
-    { 
-      "id": "3",
-      "name": "Dan Abramov", 
-      "number": "12-43-234345"
-    },
-    { 
-      "id": "4",
-      "name": "Mary Poppendieck", 
-      "number": "39-23-6423122"
-    }
-];
+app.use(express.json())      // parse incoming JSON request bodies
+app.use(cors())              // allow cross-origin requests (needed by the frontend)
+app.use(express.static('dist')) // serve the built React frontend
 
-app.get('/', (request, response) => {
-    response.send('<h1>Hello World!</h1>');
+// Custom Morgan token that logs the request body for POST requests
+morgan.token('body', (req) => {
+    return req.body && Object.keys(req.body).length > 0 ? JSON.stringify(req.body) : ''
+})
+app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body'))
+
+// --- Database ---
+
+mongoose.connect(process.env.MONGODB_URI)
+
+const personSchema = new mongoose.Schema({
+    name: String,
+    number: String,
 })
 
+// Transform the returned object: rename _id to id and remove __v
+personSchema.set('toJSON', {
+    transform: (document, returnedObject) => {
+        returnedObject.id = returnedObject._id.toString()
+        delete returnedObject._id
+        delete returnedObject.__v
+    }
+})
+
+const Person = mongoose.model('Person', personSchema)
+
+// --- Routes ---
+
+app.get('/', (req, res) => {
+    res.send('<h1>Hello World!</h1>')
+})
+
+// Get all persons from the database
 app.get('/api/persons', (req, res) => {
-    res.json(persons);
+    Person.find({}).then(persons => res.json(persons))
 })
 
+// Show how many entries are in the phonebook and the current date
 app.get('/info', (req, res) => {
-    const date = new Date();
-    res.send(`Phonebook has info for ${persons.length} people <br/> ${date}`);
+    Person.countDocuments({}).then(count => {
+        res.send(`Phonebook has info for ${count} people <br/> ${new Date()}`)
+    })
 })
 
-app.get('/api/persons/:id', (req, res) => {
-    const id = req.params.id;
-    const p = persons.find(person => person.id === id);
-    if(p) {
-        res.send(persons.find(person => person.id === id));   
-    } else {
-        res.status(404).json({ status: "404", message: "Person not found" });
-    }
+// Get a single person by id
+app.get('/api/persons/:id', (req, res, next) => {
+    Person.findById(req.params.id)
+        .then(person => {
+            if(person){
+                res.json(person)
+            } else {
+                res.status(404).end()
+            }
+        })
+        .catch(error => next(error))
 })
 
-app.delete('/api/persons/:id', (req, res) => {
-    const id = req.params.id;
-    console.log(id);
-    console.log(persons);
-    const index = persons.findIndex(person => person.id === id);    
-    if(index !== -1) {
-        persons.splice(index, 1);
-        res.status(204).end(); 
-    } else {
-        res.status(404).json({ status: "404", message: "Person not found" });
-    }
+// Delete a person by id
+app.delete('/api/persons/:id', (req, res, next) => {
+    Person.findByIdAndDelete(req.params.id)
+        .then(result => {
+            res.status(204).end()
+        })
+        .catch(error => next(error))
 })
 
+// Add a new person
 app.post('/api/persons', (req, res) => {
-    const body = req.body;
-    const random = Math.floor(Math.random() * 1000000);
-    const id = random.toString();
+    const body = req.body
 
-    if (body.name === undefined || body.number === undefined) {
-        return res.status(400).json({error: 'content missing'});
+    if (!body.name || !body.number) {
+        return res.status(400).json({ error: 'content missing' })
     }
 
-    if (persons.some(person => person.name === body.name)) {
-        return res.status(400).json({error: 'Name must be unique'});
-    }
-
-    const newPerson = {
-        id: id,
+    const person = new Person({
         name: body.name,
         number: body.number,
-    };
-    
-    persons.push(newPerson);
-    res.json(newPerson);
+    })
+
+    person.save().then(savedPerson => res.json(savedPerson))
 })
 
-app.put('/api/persons/:id', (req, res) => {
-    const id = req.params.id;
-    const body = req.body;
+// Update a person's number by id
+app.put('/api/persons/:id', (req, res, next) => {
+    const { number } = req.body
 
-    if (!body.number) {
-        return res.status(400).json({ error: 'Number is missing' });
+    if (!number) {
+        return res.status(400).json({ error: 'Number is missing' })
     }
 
-    const personIndex = persons.findIndex(person => person.id === id);
+    Person.findByIdAndUpdate(
+        req.params.id,
+        { number },
+        { new: true, runValidators: true, context: 'query' }
+    )
+        .then(updatedPerson => {
+            if (!updatedPerson) {
+                return res.status(404).end()
+            }
+            res.json(updatedPerson)
+        })
+        .catch(error => next(error))
+})
 
-    if (personIndex === -1) {
-        return res.status(404).json({ status: "404", message: "Person not found" });
+// Catches any request that didn't match a defined route
+const unknownEndpoint = (request, response) => {
+    response.status(404).send({ error: 'unknown endpoint' })
+}
+app.use(unknownEndpoint)
+
+// --- Error handler ---
+// Must be the last middleware, after all routes
+const errorHandler = (error, request, response, next) => {
+    console.error(error.message)
+
+    if (error.name === 'CastError') {
+        return response.status(400).send({ error: 'malformatted id' })
     }
 
-    persons[personIndex] = { ...persons[personIndex], number: body.number };
-
-    res.json(persons[personIndex]);
-});
-
+    next(error)
+}
+app.use(errorHandler)
 
 app.listen(PORT, () => {
-    console.log(`Server is running in port ${PORT}`); 
+    console.log(`Server is running in port ${PORT}`)
 })
